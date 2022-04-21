@@ -19,12 +19,11 @@ const server = http.createServer(function (req, res) {
 server.listen(port);
 
 // Import Socket.IO and pass our HTTP server object to it.
-const socketio = require("socket.io")
+const io = require("socket.io")(server)
 
 //this is for storing all of the information about rooms, users, etc.
 var rooms = {};
 
-const io = socketio.listen(server);
 io.on("connection", (socket) => {
     //as soon as you connect/make a username, will display all of the rooms
     io.to(socket.id).emit("list_rooms", { rooms: rooms });
