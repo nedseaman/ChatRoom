@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Socket.io Chatroom</title>
+    <link rel="stylesheet" type="text/css" href="chatroom.css" />
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <!--this is the css for the chat room-->
+    <style>
+        div#chatroom_screen>div#chatroom_panel {
+            display: flex;
+            flex-direction: row;
+        }
+
+        #occupants_panel {
+            border: 2px solid black;
+            width: 300px;
+            height: 100%;
+            margin-right: 20px;
+        }
+
+        #chat_log_panel {
+            width: 100%;
+            height: 100%;
+        }
+
+        #leave_room_button {
+            width: 100%;
+        }
+
+        table#chat_room_table>thead>tr>td {
+            font-weight: bold;
+        }
+
+        table#chat_room_table>thead#c>tr>td {
+            font-weight: bold;
+        }
+
+        table#chat_room_table>tbody>tr {
+            border: 2px solid black;
+            vertical-align: top;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            /* Stay in place */
+            z-index: 1;
+            /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%;
+            /* Full width */
+            height: 100%;
+            /* Full height */
+            overflow: auto;
+            /* Enable scroll if needed */
+            background-color: rgb(0, 0, 0);
+            /* Fallback color */
+            background-color: rgba(0, 0, 0, 0.4);
+            /* Black w/ opacity */
+            padding-top: 60px;
+        }
+
+        .modal_content {
+            justify-content: center;
+            align-items: center;
+            border-radius: 8px;
+            background-color: #fefefe;
+            margin: 5px auto;
+            /* 15% from the top and centered */
+            border: 1px solid #888;
+            width: 80%;
+            /* Could be more or less, depending on screen size */
+            padding: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!--choose a username-->
+    <div id="login_screen">
+        <h2>Username Selection</h2>
+        <div>
+            Username: <input type="text" id="username" required />
+        </div><br />
+        <button id="login_button">Log In</button>
+    </div>
+
+    <!--after you choose a username, the chat lobby will pop up.-->
+    <div id="lobby_screen">
+        <h2>Chat Lobby</h2>
+        <!--you can create a room-->
+        <div>
+            <button id="create_room_modal_button">Create Room</button>
+            <button id="random_room_button">Join Random Room</button>
+        </div><br>
+        <!--displays all the details of the room: name, occupants, if it's public or private-->
+        <table id="chat_room_table">
+            <thead>
+                <tr>
+                    <td>Room Name</td>
+                    <td>Occupants</td>
+                    <td>Public/Private</td>
+                </tr>
+            </thead>
+            <tbody id="chat_room_table_body"></tbody>
+        </table>
+        <!--if you create a room, this modal will pop up-->
+        <div class="modal" id="create_room_modal">
+            <div class="modal_content" id="create_room_modal_content">
+                <h3>Create Rooms</h3>
+                <div>
+                    <div>
+                        <label for="new_room_name">Room Name: </label><input type="text" id="new_room_name" required />
+                    </div><br />
+                    <!--using a button to check if you want a public or private room-->
+                    <div>
+                        <label for="public_room_button">Public</label><input type="radio" name="security" value="Public"
+                            id="public_room_button" checked="checked" required />
+                        <label for="private_room_button">Private</label><input type="radio" name="security"
+                            value="Private" id="private_room_button" />
+                    </div><br />
+                    <!--if you choose private, then input a password-->
+                    <div id="new_password_container">
+                        <label for="new_room_password">Password: </label><input type="password" id="new_room_password"
+                            required />
+                    </div>
+                </div><br />
+                <!--will trigger on click event in script-->
+                <button id="create_room_button">Create Room</button>
+            </div>
+        </div>
+    </div>
+
+    <!--when you join an actual chat room-->
+    <div id="chatroom_screen">
+        <div>
+            <button id="leave_room_button">Leave Room</button>
+        </div><br>
+        <!--will list the occupants and the chat log-->
+        <div id="chatroom_panel">
+            <div id="occupants_panel">
+            </div>
+            <div id="chat_log_panel">
+                <!--sending a message to the general room-->
+                <div>
+                    <label for="user_message">Message: </label><input type="text" id="user_message" required />
+                    <button id="send_message_button">Send</button>
+                </div><br>
+                <div id="chat_log"></div>
+            </div>
+        </div>
+    </div>
+    <script>
+
+        //these will update based on whatever the user does: username is username (unless anonymous), current_room is the socket id
+        let modal;
+        let username;
+        let current_room;
+
+        //hiding some screens until on click stuff happens
+        $("#lobby_screen").hide();
+        $("#chatroom_screen").hide();
+        $("#new_password_container").hide();
+
+        window.onclick = function (event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+
+        var socket = io.connect();
+
+        //if you want a private room, then the password input will pop up; otherwise, it will not show
+        $("input[name$='security']").click(() => {
+            var buttons = $("input[name$='security']");
+            for (var i = 0; i < buttons.length; i++) {
+                if (buttons[i].checked) {
+                    //the private password input will only be shown if the button is checked
+                    if (buttons[i].value == "Public") {
+                        $("#new_password_container").hide();
+                    } else {
+                        $("#new_password_container").show();
+                    }
+                }
+            }
+
+        })
+
+        //for loop to list all of the rooms that have been created along with a join button and a join random at the end (creative portion)
+        socket.on("list_rooms", (data) => {
+            $("#chat_room_table_body").empty();
+            for (const key in data.rooms) {
+                //each room will be displayed with their names, number of users, if it's private or public, and a join button
+                $("#chat_room_table_body").append(`<tr id="${data.rooms[key].name}_row">
+                    <td>${data.rooms[key].name}</td>
+                    <td>${data.rooms[key].num_occupants}</td>
+                    <td>${data.rooms[key].private ? "Private" : "Public"}</td>
+                    <td><button id="${data.rooms[key].name}" class="join_room_button">Join</button></td><tr>`);
+                if (data.rooms[key].private) {
+                    //if the room is private, then there will be a password input shown
+                    $(`#${data.rooms[key].name}_row`).append(`<td><input type="password" id="${data.rooms[key].name}_password"/></td>`);
+                }
+
+                //once you click on a room to join, then the server side will receive all of the information needed to send you to the room
+                $(`#${data.rooms[key].name}`).on("click", (event) => {
+                    $("#chat_log").empty();
+                    if (data.rooms[key].private) {
+                        socket.emit("join_room", { room: event.target.id, username: username, password: $(`#${data.rooms[key].name}_password`).val() });
+                    } else {
+                        socket.emit("join_room", { room: event.target.id, username: username });
+                    }
+                    current_room = event.target.id;
+                });
+
+                //if the user that joins the room is the admin/creator of the room, then they will be able to see the some more options, including delete room, kick user, and ban user
+                if (data.rooms[key].admin == socket.id) {
+                    $(`#${data.rooms[key].name}_row`).append(`<td><button id="${data.rooms[key].name}_delete">Delete</button></td>`);
+                    $(`#${data.rooms[key].name}_delete`).on("click", (event) => {
+                        socket.emit("delete_room", { room: key, kicking_user: username });
+                    });
+                }
+
+            }
+
+        });
+
+        //if you clicked the join random button, then you'll be directed to a random room 
+        $(`#random_room_button`).on("click", (event) => {
+            $("#chat_log").empty();
+            socket.emit("join_random_room", { username: username });
+        });
+
+        socket.on("list_occupants", (data) => {
+            $("#occupants_panel").empty();
+            //for loop to list all of the users in the chat room
+            for (const key in data.occupants) {
+                //anyone can kick a user, so the kick button is included/shown for them
+                $("#occupants_panel").append(
+                    `<div id="occupant_${key}">
+                        <button id="kick_button_${key}">Kick</button>
+                        <input type="checkbox" id="${key}" name="checkbox" value="${key}" >
+                        <label for="${key}"> ${key == socket.id ? data.occupants[key] + " (You)" : data.occupants[key]}</label>
+                    </div>`);
+                //kicking the user!
+                $(`#kick_button_${key}`).on("click", (event) => {
+                    socket.emit("kick_user", { kicking_user: username, user: key });
+                });
+
+                //if you're the admin, then you can see the ban button
+                if (data.admin == socket.id) {
+                    $(`#occupant_${key}`).prepend(`<button id="ban_button_${key}">Ban</button>`);
+                    $(`#ban_button_${key}`).on("click", (event) => {
+                        socket.emit("ban_user", { banning_user: username, user: key });
+                    });
+                }
+            }
+        });
+
+        //when you log in, the login screen modal disappears and the lobby screen modal appears
+        $("#login_button").on("click", (event) => {
+            username = $("#username").val();
+            $("#login_screen").hide();
+            $("#lobby_screen").show();
+        });
+
+        //creating a room will show the create room modal
+        $("#create_room_modal_button").on("click", (event) => {
+            $("#create_room_modal").show();
+            modal = document.getElementById("create_room_modal");
+        });
+
+        //clicking the create button in the create room modal will send information to server side (creating the new room)
+        $("#create_room_button").on("click", (event) => {
+            var private = $("#private_room_button").is(":checked") ? true : false;
+
+            if (private) {
+                socket.emit("create_room", { name: $("#new_room_name").val(), private: private, password: $("#new_room_password").val(), admin: socket.id, num_occupants: 0, occupants: {}, banned: {} });
+            } else {
+                socket.emit("create_room", { name: $("#new_room_name").val(), private: private, admin: socket.id, num_occupants: 0, occupants: {}, banned: {} });
+            }
+        });
+
+        //when user joins, show the chatroom screen and announce that they've joined
+        socket.on("user_joined", (data) => {
+            $("#lobby_screen").hide();
+            $("#chatroom_screen").show();
+            $("#chat_log").append(document.createTextNode(data.user + " has joined the room!"));
+            $("#chat_log").append(document.createElement("hr"));
+        });
+
+        //when user leaves, show how they've left: kicked, banned, or just normal leaving the room
+        socket.on("user_left", (data) => {
+            if (data.kicked) {
+                $("#chat_log").append(document.createTextNode(data.kicking_user + " has kicked " + data.user + "."));
+            } else if (data.banned) {
+                $("#chat_log").append(document.createTextNode(data.banning_user + " has banned " + data.user + "."));
+            } else {
+                $("#chat_log").append(document.createTextNode(data.user + " has left the room."));
+            }
+            $("#chat_log").append(document.createElement("hr"));
+        });
+
+        //when you send a message, you can choose to send it to everyone in the room or to whoever you select (this includes the private messaging portion of the assignment)
+        $("#send_message_button").on("click", (event) => {
+            var checkboxes = document.getElementsByName("checkbox");
+            var recipients = [];
+            var count = 0;
+
+            for (var i = 0; i < checkboxes.length; i++) {
+                if (checkboxes[i].checked) {
+                    recipients.push(checkboxes[i].id);
+                    count++;
+                }
+            }
+
+            if (count == 0 || count == checkboxes.length) {
+                socket.emit("send_message", { user: username, room: current_room, message: $("#user_message").val(), private: false });
+            } else {
+                socket.emit("send_message", { user: username, room: current_room, message: $("#user_message").val(), private: true, recipients: recipients });
+            }
+        });
+
+        //when you receieve a message, it'll be appended to the chat log; it will show if it's a private message or not
+        socket.on("receive_message", (data) => {
+            if (data.private) {
+                //if the message is private, then it will show (Private) username: message
+                $("#chat_log").append(document.createTextNode("(Private) " + data.user + ": " + data.message));
+            } else {
+                $("#chat_log").append(document.createTextNode(data.user + ": " + data.message));
+            }
+            $("#chat_log").append(document.createElement("hr"));
+        });
+
+        //leaving the room! hides the chatroom screen and shows you the lobby screen with all of the rooms again
+        $("#leave_room_button").on("click", (event) => {
+            $("#chatroom_screen").hide();
+            $("#lobby_screen").show();
+            socket.emit("leave_room", { user: username, room: current_room, kicked: false });
+        });
+
+        //shows errors and failures
+        socket.on("failure", (data) => {
+            alert(data.type + ": " + data.message);
+        });
+
+        //if you've been kicked from a room, you are sent back to lobby screen
+        socket.on("kicked", (data) => {
+            $("#chatroom_screen").hide();
+            $("#lobby_screen").show();
+            socket.emit("leave_room", { user: username, room: current_room, kicked: true, banned: false, kicking_user: data.kicking_user });
+        });
+
+        //if you were banned from a room, then you are sent back to lobby screen as well
+        socket.on("banned", (data) => {
+            $("#chatroom_screen").hide();
+            $("#lobby_screen").show();
+            socket.emit("leave_room", { user: username, room: current_room, kicked: false, banned: true, banning_user: data.banning_user });
+        });
+
+        socket.on("random_room_joined", (data) => {
+            current_room = data.room;
+        });
+
+    </script>
+</body>
+
+</html>
